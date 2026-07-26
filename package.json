@@ -1,0 +1,46 @@
+{
+  "name": "@bna/cli",
+  "version": "0.1.0",
+  "description": "BNA CLI for validating, probing and managing A2A agent cards",
+  "type": "module",
+  "bin": {
+    "bna": "bin/bna.js"
+  },
+  "scripts": {
+    "start": "node bin/bna.js",
+    "test": "node --test",
+    "test:coverage": "node --experimental-test-coverage --test --test-coverage-lines=85",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "test:package": "node --test test/package.test.js"
+  },
+  "dependencies": {
+    "@bna/validator-core": "file:../bna-validator-core",
+    "@bna/probe-protocol": "file:../probe-protocol"
+  },
+  "bundleDependencies": [
+    "@bna/validator-core"
+  ],
+  "files": [
+    "bin/",
+    "src/",
+    "schemas/",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "eslint": "^9.39.1",
+    "prettier": "^3.8.2",
+    "typescript": "^5.9.3"
+  }
+}

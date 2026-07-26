@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bna.dev/schemas/cli-output/1.0.0.json",
+  "title": "BNA CLI JSON output",
+  "type": "object",
+  "required": ["schemaVersion", "tool", "toolVersion", "generatedAt", "result"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "tool": { "enum": ["validate", "probe", "verify"] },
+    "toolVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "signature": {
+      "type": "object",
+      "required": ["format", "detachedJws", "algorithm"],
+      "properties": {
+        "format": { "const": "detached-jws" },
+        "detachedJws": { "type": "string", "pattern": "^[^.]+\\.\\.[^.]+$" },
+        "algorithm": { "enum": ["EdDSA", "RS256"] },
+        "keyId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "oneOf": [
+        { "$ref": "#/$defs/validationResult" },
+        { "$ref": "#/$defs/probeResult" },
+        { "$ref": "#/$defs/verificationResult" }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "validationResult": {
+      "type": "object",
+      "required": ["report"],
+      "properties": {
+        "report": {
+          "type": "object",
+          "required": ["verdict", "errors", "warns", "fields"],
+          "properties": {
+            "verdict": { "enum": ["ok", "warn", "err"] },
+            "errors": { "type": "integer", "minimum": 0 },
+            "warns": { "type": "integer", "minimum": 0 },
+            "fields": { "type": "array" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "probeResult": {
+      "description": "summary is a BNA probe-protocol summary. Its authoritative definition is https://bna.dev/schemas/probe-summary/1.0.0.json, shipped in @bna/probe-protocol; the constraints repeated here are the subset this envelope depends on. test/probe-protocol.test.js validates real probe output against the published schema so the two cannot drift.",
+      "type": "object",
+      "required": ["summary"],
+      "properties": {
+        "summary": {
+          "type": "object",
+          "required": [
+            "specVersion",
+            "target",
+            "vantagePoint",
+            "attempted",
+            "success",
+            "failure",
+            "notAttempted",
+            "samples"
+          ],
+          "properties": {
+            "specVersion": { "const": "1.0.0" },
+            "target": { "type": "string" },
+            "vantagePoint": { "type": "string", "const": "single-local" },
+            "attempted": { "type": "integer", "minimum": 0 },
+            "success": { "type": "integer", "minimum": 0 },
+            "failure": { "type": "integer", "minimum": 0 },
+            "notAttempted": { "type": "integer", "minimum": 0 },
+            "samples": { "type": "array" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "verificationResult": {
+      "type": "object",
+      "required": ["valid"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "keyId": { "type": "string" },
+        "algorithm": { "enum": ["EdDSA", "RS256"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}
