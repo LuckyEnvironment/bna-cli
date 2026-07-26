@@ -17,11 +17,12 @@
     "test:package": "node --test test/package.test.js"
   },
   "dependencies": {
-    "@bna/validator-core": "file:../bna-validator-core",
-    "@bna/probe-protocol": "file:../probe-protocol"
+    "@bna/validator-core": "git+https://github.com/LuckyEnvironment/bna-validator-core.git#e90ae9594552a74ff1d2cb853fee3536c63be5fd",
+    "@bna/probe-protocol": "git+https://github.com/LuckyEnvironment/probe-protocol.git#464057bdf43168532d68227d8993007791bcab22"
   },
   "bundleDependencies": [
-    "@bna/validator-core"
+    "@bna/validator-core",
+    "@bna/probe-protocol"
   ],
   "files": [
     "bin/",

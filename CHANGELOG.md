@@ -29,3 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   promised in public, so the CLI changed. The result is that a probe summary
   emitted by this tool is the same artefact the hosted service emits, and can
   be checked against the same schema by someone who trusts neither.
+
+- **Dependencies are pinned to exact commit SHAs** rather than `file:../`
+  paths. The local paths only resolved inside the development monorepo, so a
+  clean clone produced dangling symlinks, and CI failed on typecheck and four
+  test files. These become `^0.1.0` ranges once the `@bna` npm scope is
+  published; see CONTRIBUTING.md.
+
+### Fixed
+
+- **`@bna/probe-protocol` is now bundled into the published tarball.** It was
+  declared as a dependency but omitted from `bundleDependencies`, so a
+  published `npx @bna/cli probe` would have installed cleanly and then thrown
+  `MODULE_NOT_FOUND` on first use — breaking the one path that has to work on
+  a clean machine.
+
+  `npm run test:package` now derives the expected bundle set from the declared
+  dependencies rather than a hard-coded list, so the same class of mistake
+  cannot recur silently, and it exercises `probe` from the installed tarball
+  rather than `validate` alone.
+
+- **Validation output no longer reads "declared not declared".** The retention
+  line prefixed every value with `declared `, including the absent case. Both
+  the residency and retention lines now share one helper, so an undeclared
+  field reads `not declared, not verifiable externally`.

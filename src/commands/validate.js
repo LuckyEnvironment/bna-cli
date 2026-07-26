@@ -60,6 +60,20 @@ function humanLine(label, state, detail) {
 }
 
 /**
+ * Describe a field the CLI cannot check from here.
+ *
+ * Both branches end in the same disclaimer, because both are the same state:
+ * BNA did not measure this. A declared value is reported as a declaration and
+ * never as an observation.
+ *
+ * @param {string | null} declared
+ * @returns {string}
+ */
+function unverifiable(declared) {
+  return declared === null ? "not declared, not verifiable externally" : `declared ${declared}, not verifiable externally`;
+}
+
+/**
  * Render only local observations. In particular, a card declaration is never
  * shown as a transport, residency, or retention pass.
  *
@@ -82,17 +96,13 @@ export function printHuman(report, card) {
 
   const residency = cardValue(card, "x-bna.residency");
   const zdr = cardValue(card, "x-bna.zdr");
-  const retention = zdr === true ? "zero-retention" : zdr === false ? "retention declaration present" : "not declared";
+
   console.log(humanLine("Card schema", schemaState, schemaDetail));
   console.log(humanLine("Transport", "----", "not observed by local schema validation"));
+  console.log(humanLine("Residency", "----", unverifiable(typeof residency === "string" ? residency : null)));
   console.log(
-    humanLine(
-      "Residency",
-      "----",
-      `${typeof residency === "string" ? `declared ${residency}` : "not declared"}, not verifiable externally`
-    )
+    humanLine("Retention policy", "----", unverifiable(zdr === true ? "zero-retention" : zdr === false ? "retention" : null))
   );
-  console.log(humanLine("Retention policy", "----", `declared ${retention}, not verifiable externally`));
   console.log(
     `\n  ${report.fields.filter((field) => field.level === "ok").length} checks passed · ${report.warns} warnings · ${report.errors} failures`
   );
