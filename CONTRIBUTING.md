@@ -31,6 +31,12 @@ that installs cleanly and then throws `MODULE_NOT_FOUND` on first use.
 command including `probe`. Adding a dependency without bundling it fails that
 test rather than reaching a user.
 
+`npm run verify:container` is the stronger form of the same check and should be
+run before any release. It installs the packed tarball in a disposable Linux
+container with `--network none`, on Node 20, 22 and 24. Run it whenever you
+change dependencies, the `files` allowlist, `bundleDependencies`, or anything
+in `bin/`.
+
 Do not add a third-party runtime dependency without justifying it in the issue:
 what it does, why the standard library will not, its transitive count, and its
 maintenance status.

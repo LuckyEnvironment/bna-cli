@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `test/probe-protocol.test.js`, which runs the real command and validates its
   output against the published probe-summary schema. The CLI cannot drift away
   from the specification without this going red.
+- `npm run verify:container` — packs the working tree and exercises the
+  resulting tarball in a disposable Linux container on Node 20, 22 and 24,
+  with `--network none`. Severing the network is what makes the run evidence
+  rather than assertion: the install can only succeed if the tarball is
+  self-contained, and no telemetry is possible even in principle. It checks
+  the first-run transcript, all five documented exit codes, `--json` stdout
+  purity, and conformance of probe output to the published schema.
+
+  Covers Linux only, and ARM64 on Apple Silicon. It complements the CI matrix
+  rather than replacing it.
 
 ### Changed
 

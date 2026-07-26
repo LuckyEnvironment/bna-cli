@@ -14,7 +14,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm run test",
-    "test:package": "node --test test/package.test.js"
+    "test:package": "node --test test/package.test.js",
+    "verify:container": "bash scripts/verify-container.sh"
   },
   "dependencies": {
     "@bna/validator-core": "git+https://github.com/LuckyEnvironment/bna-validator-core.git#e90ae9594552a74ff1d2cb853fee3536c63be5fd",

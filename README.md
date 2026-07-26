@@ -202,12 +202,40 @@ Zero third-party runtime dependencies. In a security-adjacent CLI, every depende
 ## Development
 
 ```bash
-npm run check          # lint + typecheck + tests — run this before committing
-npm run test:coverage  # enforces an 85% line-coverage floor
-npm run test:package   # packs the tarball, installs it, exercises every command
+npm run check             # lint + typecheck + tests — run this before committing
+npm run test:coverage     # enforces an 85% line-coverage floor
+npm run test:package      # packs the tarball, installs it, exercises every command
+npm run verify:container  # runs the packed tarball in a clean Linux container
 ```
 
 `test:package` is the one that matters before a release: it installs the real tarball with `--offline`, so it fails if any runtime dependency is missing from the shipped artifact rather than discovering it after publication.
+
+`verify:container` goes further. It packs the working tree, then installs and exercises that tarball inside a disposable Linux container on Node 20, 22 and 24 — **with `--network none`**. Cutting the network proves three things at once that are otherwise argued rather than shown:
+
+- the tarball is self-contained, because the install could not have reached any registry
+- there is no telemetry, because nothing external is reachable at all
+- `probe` still works, against loopback
+
+It checks the first-run transcript, all five exit codes, that `--json` emits exactly one document on stdout with diagnostics on stderr, and that probe output conforms to the published probe-summary schema.
+
+```
+ node v22.23.1  ·  Linux/aarch64
+ network: none (--network none confirmed)
+install: OK
+  PASS  exit 0 — valid card                          exit 0
+  PASS  exit 1 — card with warnings                  exit 1
+  PASS  exit 2 — schema or command error             exit 2
+  PASS  exit 3 — network or probe failure            exit 3
+  PASS  exit 4 — signing context missing             exit 4
+  PASS  exit 0 — successful local probe              exit 0
+  PASS  stdout parses as a single JSON document
+  PASS  conformant to probe-summary-1.0.0
+ node v22.23.1: 8 passed, 0 failed
+```
+
+Pass a version to narrow it (`npm run verify:container -- 22`), or set `KEEP_IMAGES=1` to keep the images for debugging. It needs a working Docker daemon; on macOS the Docker CLI alone is not enough, since containers require a Linux VM such as `colima`.
+
+**This is not a substitute for CI.** It covers Linux only — macOS and Windows containers are not available on a macOS host — and on Apple Silicon it runs ARM64 while GitHub's runners are x86_64. Treat it as evidence alongside the CI matrix, not instead of it.
 
 ---
 

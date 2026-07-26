@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "1.0",
+  "name": "Document Intake Agent",
+  "description": "Extracts structured fields from scanned documents.",
+  "version": "3.1.0",
+  "url": "https://intake.example.invalid/a2a",
+  "provider": { "name": "Example Document Services NV" },
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["application/pdf"],
+  "defaultOutputModes": ["application/json"],
+  "skills": ["extract-fields"],
+  "x-bna.residency": "eu-west-1",
+  "x-bna.contact": "security@example.invalid"
+}

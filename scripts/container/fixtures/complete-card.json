@@ -1,0 +1,23 @@
+{
+  "protocolVersion": "1.0",
+  "name": "Rift Route Optimiser",
+  "description": "Optimises multi-leg freight routing against live carrier capacity.",
+  "version": "1.9.2",
+  "url": "https://api.vectorfreight.eu/a2a",
+  "provider": {
+    "name": "Vector Freight BV",
+    "url": "https://vectorfreight.eu"
+  },
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": true
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": ["route.optimise"],
+  "x-bna.residency": "eu-west-1",
+  "x-bna.zdr": true,
+  "x-bna.compliance": ["GDPR"],
+  "x-bna.pricing": { "type": "performance", "ratePerUnit": 100 },
+  "x-bna.contact": "ops@vectorfreight.eu"
+}
