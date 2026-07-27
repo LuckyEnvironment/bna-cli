@@ -3,6 +3,7 @@
 import { login, whoami } from "./commands/auth.js";
 import { diffCommand } from "./commands/diff.js";
 import { probeCommand } from "./commands/probe.js";
+import { auditScoreCommand } from "./commands/audit-score.js";
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { errorMessage } from "./lib/errors.js";
@@ -27,6 +28,9 @@ Commands:
                                             Verify a detached JWS summary
   diff <url|file> [--update] [--allow-private]
                                             Compare card to stored snapshot
+  audit-score <agentId> --period <YYYY-MM> [--against <sth.json>]
+        [--bundle <bundle.json>] [--log-base <url>] [--json]
+                                            Check a score against the log
 
 Flags:
   --allow-private    Permit local/private targets for development (announced)
@@ -48,6 +52,10 @@ export function parseFlags(args) {
   const valueFlags = new Set([
     "--org",
     "--token",
+    "--period",
+    "--against",
+    "--bundle",
+    "--log-base",
     "--window",
     "--deadline",
     "--issuer",
@@ -137,8 +145,8 @@ export async function runCli(argv) {
   const args = positionals.slice(1);
   const json = flags.json === true;
 
-  if (json && !["validate", "probe", "verify"].includes(command)) {
-    console.error(`--json is not available for ${command}. Use validate, probe, or verify.`);
+  if (json && !["validate", "probe", "verify", "audit-score"].includes(command)) {
+    console.error(`--json is not available for ${command}. Use validate, probe, verify, or audit-score.`);
     return 2;
   }
 
@@ -187,6 +195,15 @@ export async function runCli(argv) {
         return 2;
       }
       return verifyCommand(args[0], { key: stringFlag(flags, "key"), json });
+    case "audit-score":
+      return auditScoreCommand(args[0], {
+        period: stringFlag(flags, "period"),
+        against: stringFlag(flags, "against"),
+        bundle: stringFlag(flags, "bundle"),
+        logBase: stringFlag(flags, "log-base"),
+        json
+      });
+
     case "diff":
       if (!args[0]) {
         console.error("diff requires <url|file>. Next action: supply an agent-card URL or JSON file.");

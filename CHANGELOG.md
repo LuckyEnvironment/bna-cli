@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`bna audit-score <agentId> --period <YYYY-MM>`** — verify that a published
+  score is backed by the transparency log. Four checks, all offline after the
+  fetch: every leaf has a valid inclusion proof against the bundle's tree head;
+  that tree head is consistent with one you recorded independently; re-running
+  the probe protocol's §2.3 arithmetic over the leaves reproduces the claimed
+  figures exactly; and no leaf is graded `poisoned`.
+
+  The arithmetic is `aggregate` from `@bna/probe-protocol`, called rather than
+  reimplemented. A verifier with its own copy of the scoring rule would agree
+  with a bundle whenever both were wrong in the same way, which is the one
+  failure this command exists to catch.
+
+  `--bundle <file>` verifies a saved bundle offline; otherwise the bundle is
+  fetched from `--log-base`, default `https://transparency.bna.dev`, which does
+  not serve bundles yet.
+
+- **Probe nonces.** Every probe generates 16 cryptographically random bytes,
+  sends them as `BNA-Probe-Nonce`, and commits them into an observation leaf
+  **before the request is sent**, alongside `requestedAt`. The nonce is what
+  lets the observed party check BNA's claim against their own access log later:
+  a logged observation with no matching request is a measurement that never
+  happened, and it becomes provable by the vendor from data BNA published.
+
+  The ordering is enforced structurally, not by convention. `openObservation`
+  is the only source of both the nonce and the request headers carrying it, so
+  a probe cannot be sent without having committed first, and `sealObservation`
+  can only copy a commitment it is handed — a spread copy is refused by
+  identity. The end-to-end test asserts the nonce in the emitted leaf is the
+  one the *server* received, which fails if the leaf is ever built after the
+  response is read.
+
+- `BNA-Probe-Receipt` is captured verbatim into `leaf.receipt` and **not
+  verified** at this milestone. A vendor who does not send one is not
+  penalised: the outcome is decided by the response, never by whether a receipt
+  was offered.
+
+- `observations` in `probe --json` output — one leaf per sample. They travel
+  beside the summary rather than inside it, because a probe-protocol summary is
+  a published shape with `additionalProperties: false` that belongs to the
+  specification rather than to this tool.
+
+### Changed
+
+- `responseDigest` covers a normalised response **head** only — the status and
+  a fixed allowlist of headers, lowercased and sorted. The body is cancelled,
+  never read. This is a retention commitment rather than an optimisation: the
+  log cannot become a copy of what agents returned, which is what the
+  zero-retention posture agent cards declare depends on.
+
+### Added
+
 - Safe URL fetching, honest local validation display, versioned JSON output,
   detached-JWS signing and verification, and probe etiquette safeguards.
 - `@bna/probe-protocol` as a dependency, so the probe procedure and its result

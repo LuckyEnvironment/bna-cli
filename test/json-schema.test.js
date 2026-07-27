@@ -83,10 +83,25 @@ test("committed schema accepts each versioned JSON envelope", () => {
     }
   });
   const verification = createEnvelope("verify", { valid: true, algorithm: "EdDSA", keyId: "2026-01" });
+  const audit = createEnvelope("audit-score", {
+    agentId: "agt_7c1f",
+    period: "2026-06",
+    backed: true,
+    leafCount: 2,
+    steps: [
+      { step: 1, name: "inclusion", passed: true, detail: null },
+      { step: 2, name: "consistency", passed: true, detail: "skipped: no --against tree head was supplied" },
+      { step: 3, name: "arithmetic", passed: true, detail: null },
+      { step: 4, name: "poisoned", passed: true, detail: null }
+    ],
+    derived: { attempted: 2, success: 2, failure: 0, notAttempted: 0, uptimePct: 100, avgLatencyMs: 85 },
+    claimed: null
+  });
 
   assert.equal(validates(validation, schema, schema), true);
   assert.equal(validates(probe, schema, schema), true);
   assert.equal(validates(verification, schema, schema), true);
+  assert.equal(validates(audit, schema, schema), true);
 });
 
 test("committed schema rejects incompatible envelopes", () => {

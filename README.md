@@ -48,6 +48,7 @@ Node 20, 22 and 24 are supported on Linux, macOS and Windows.
 | `bna probe <url>` | Read-only liveness observation from this machine |
 | `bna verify <summary.json>` | Verify a signed probe summary |
 | `bna diff <url\|file>` | Compare a card to a stored snapshot |
+| `bna audit-score <agentId>` | Check a published score against the transparency log |
 | `bna login` / `bna whoami` | Manage local auth context |
 
 Full flags: `bna <command> --help`.
@@ -98,9 +99,15 @@ The CI contract. Every path is covered by a test.
 |---:|---|
 | `0` | Success |
 | `1` | Warning, or drift detected |
-| `2` | Schema or command error |
+| `2` | Schema or command error; for `audit-score`, an unbacked or malformed bundle |
 | `3` | Network or probe failure |
 | `4` | Auth context missing |
+
+`audit-score` uses `2` rather than `1` for an unbacked score. A failed
+inclusion proof is not a warning — the score is not supported by the log, and a
+CI job that treats `1` as non-fatal must not be allowed to pass one. `1` is
+reserved there for a result that verifies but is weaker than it looks, such as
+a bundle containing leaves with an unresolved contradiction against them.
 
 ```bash
 bna validate ./card.json --strict || echo "card is incomplete"
@@ -242,3 +249,44 @@ Pass a version to narrow it (`npm run verify:container -- 22`), or set `KEEP_IMA
 ## Licence
 
 [Apache 2.0](./LICENSE). See [NOTICE](./NOTICE), [SECURITY.md](./SECURITY.md), [CONTRIBUTING.md](./CONTRIBUTING.md), [CHANGELOG.md](./CHANGELOG.md).
+
+
+## audit-score
+
+Verify that a published score is backed by the transparency log. Everything
+after the fetch happens offline, on your machine, with no further reference to
+BNA.
+
+```bash
+bna audit-score agt_7c1f --period 2026-06 --against ./sth-i-saved-in-june.json
+```
+
+```
+  Score bundle for agt_7c1f, period 2026-06 — 760 leaves
+  PASS  1. every leaf has a valid inclusion proof against the bundle's tree head
+  PASS  2. the tree head is consistent with an independently recorded one
+  PASS  3. re-running the specification's arithmetic over the leaves reproduces the score
+  PASS  4. no leaf in the set is graded poisoned
+
+  BACKED — every premise of this score is public and checked.
+```
+
+| Flag | Effect |
+|---|---|
+| `--period <YYYY-MM>` | Required. The scoring period. |
+| `--against <sth.json>` | A tree head you recorded earlier. Without it, step 2 proves nothing and says so. |
+| `--bundle <file>` | Verify a saved bundle instead of fetching. Takes precedence over the network. |
+| `--log-base <url>` | Where to fetch from. Defaults to `https://transparency.bna.dev`. |
+| `--json` | Machine-readable envelope on stdout; notes and warnings on stderr. |
+
+**Step 2 is the one that carries the weight**, and it only means something if
+the tree head you compare against is one you held *before BNA knew you would
+ask*. Record one now and keep it.
+
+**What a BACKED verdict does not mean.** It means the leaves were committed to
+the log before the score was published, the log has not been edited since, and
+the arithmetic follows from the leaves. It does not mean the observations
+happened: a fabricated measurement, committed honestly and never altered,
+produces a perfectly valid set of proofs. Only the observed party can check
+that, from their own access logs, against the nonce each probe sent — see
+`@bna/witness-log` and `bna witness` when it ships.

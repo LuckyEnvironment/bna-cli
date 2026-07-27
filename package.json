@@ -19,11 +19,13 @@
   },
   "dependencies": {
     "@bna/validator-core": "git+https://github.com/LuckyEnvironment/bna-validator-core.git#e90ae9594552a74ff1d2cb853fee3536c63be5fd",
-    "@bna/probe-protocol": "git+https://github.com/LuckyEnvironment/probe-protocol.git#464057bdf43168532d68227d8993007791bcab22"
+    "@bna/probe-protocol": "git+https://github.com/LuckyEnvironment/probe-protocol.git#464057bdf43168532d68227d8993007791bcab22",
+    "@bna/witness-log": "file:../bna-witness-log"
   },
   "bundleDependencies": [
     "@bna/validator-core",
-    "@bna/probe-protocol"
+    "@bna/probe-protocol",
+    "@bna/witness-log"
   ],
   "files": [
     "bin/",

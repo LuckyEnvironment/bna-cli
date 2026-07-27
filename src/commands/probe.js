@@ -13,6 +13,12 @@ import {
 import { asCodedError, codedError, errorMessage } from "../lib/errors.js";
 import { createEnvelope, writeJson } from "../lib/json-envelope.js";
 import { parseRemoteUrl, safeFetch } from "../lib/network-safety.js";
+import {
+  RECEIPT_HEADER,
+  digestResponseHead,
+  openObservation,
+  sealObservation
+} from "../lib/observation.js";
 
 /**
  * Every normative rule below is imported from `@bna/probe-protocol` rather
@@ -30,6 +36,15 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const DEFAULT_BACKOFF_MS = 1_000;
 
 /**
+ * A local probe is one machine, and the leaf says so rather than implying a
+ * fleet. `vantagePoint: "single-local"` already carries this in the summary;
+ * the leaf repeats it because a leaf has to stand on its own once it is in a
+ * log alongside leaves from real vantage points.
+ */
+const LOCAL_VANTAGE = "single-local";
+const LOCAL_PROBE_KEY_ID = "local-unsigned";
+
+/**
  * @typedef {"success" | "failure" | "not_attempted"} ProbeOutcome
  * @typedef {{
  *   index: number,
@@ -38,7 +53,8 @@ const DEFAULT_BACKOFF_MS = 1_000;
  *   at: string,
  *   status?: number,
  *   reason?: string,
- *   retryAfterMs?: number
+ *   retryAfterMs?: number,
+ *   observation?: Record<string, unknown>
  * }} ProbeSample
  * @typedef {{
  *   watch?: boolean,
@@ -130,7 +146,9 @@ export function allowedProbeMethod(method) {
  *   method: "GET" | "HEAD",
  *   signal: AbortSignal,
  *   deadlineAt: number,
- *   allowPrivateHosts?: boolean
+ *   allowPrivateHosts?: boolean,
+ *   agentId?: string | null,
+ *   targetKeyId?: string | null
  * }} options
  * @returns {Promise<ProbeSample>}
  */
@@ -142,11 +160,25 @@ export async function singleProbe(url, options) {
   options.signal.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(abort, timeout);
 
+  // Opened before the request, because the nonce has to be inside it. The
+  // headers below are the only ones that carry `BNA-Probe-Nonce`, so there is
+  // no path that sends a probe without having committed to a nonce and a
+  // `requestedAt` first. See src/lib/observation.js.
+  const { commitment, headers } = openObservation({
+    target: url,
+    agentId: options.agentId ?? null,
+    targetKeyId: options.targetKeyId ?? null,
+    vantage: LOCAL_VANTAGE,
+    probeKeyId: LOCAL_PROBE_KEY_ID,
+    method: options.method,
+    userAgent: PROBE_USER_AGENT
+  });
+
   try {
     const response = await safeFetch(
       url,
       {
-        headers: { "user-agent": PROBE_USER_AGENT },
+        headers,
         method: options.method,
         signal: requestController.signal
       },
@@ -160,6 +192,15 @@ export async function singleProbe(url, options) {
     // spec's rule, so it is deliberately not consulted here.
     const { outcome, reason } = classifyOutcome({ status: response.status });
     const retryAfterMs = response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) : null;
+
+    // The receipt is captured verbatim and not verified: at this milestone the
+    // vendor's key is not fetched, so a receipt is evidence to be checked
+    // later, never a grade awarded now.
+    const receipt = response.headers.get(RECEIPT_HEADER);
+    const responseDigest = digestResponseHead(response.status, response.headers);
+
+    // The body is cancelled, never read. `responseDigest` covers the head
+    // alone, so nothing an agent returned is retained anywhere.
     await response.body?.cancel();
 
     return {
@@ -169,7 +210,15 @@ export async function singleProbe(url, options) {
       at,
       status: response.status,
       ...(reason === undefined ? {} : { reason }),
-      ...(retryAfterMs === null ? {} : { retryAfterMs })
+      ...(retryAfterMs === null ? {} : { retryAfterMs }),
+      observation: sealObservation(commitment, {
+        outcome,
+        reason: reason ?? null,
+        status: response.status,
+        ms,
+        responseDigest,
+        receipt
+      })
     };
   } catch (error) {
     const coded = asCodedError(error);
@@ -180,13 +229,25 @@ export async function singleProbe(url, options) {
     const deadlineReached = options.signal.reason === "deadline" || Date.now() >= options.deadlineAt;
     const interrupted = options.signal.aborted && !deadlineReached;
     const { outcome, reason } = classifyOutcome({ interrupted, deadlineReached, status: null });
+    const ms = Math.round(performance.now() - started);
 
     return {
       index: options.index,
       outcome,
-      ms: Math.round(performance.now() - started),
+      ms,
       at: new Date().toISOString(),
-      ...(reason === undefined ? {} : { reason })
+      ...(reason === undefined ? {} : { reason }),
+      // A failure is committed with the same nonce that was sent. It is the
+      // leaf a vendor can contradict by showing no request ever arrived
+      // bearing it — see SURFACE-05 section 5.
+      observation: sealObservation(commitment, {
+        outcome,
+        reason: reason ?? null,
+        status: null,
+        ms,
+        responseDigest: null,
+        receipt: null
+      })
     };
   } finally {
     clearTimeout(timer);
@@ -425,6 +486,19 @@ export async function probeCommand(url, options = {}) {
     }
 
     const { attempted, success, failure, notAttempted, uptimePct, avgLatencyMs } = aggregate(samples);
+
+    // The observation leaves travel beside the summary, not inside it. A
+    // probe-protocol summary is a published shape with `additionalProperties:
+    // false`, and it belongs to the specification rather than to this tool —
+    // so the CLI extends its own envelope and leaves that contract alone.
+    const observations = samples.map((sample) => sample.observation).filter(Boolean);
+    /** @type {ProbeSample[]} */
+    const specSamples = samples.map((sample) => {
+      const copy = { ...sample };
+      delete copy.observation;
+      return copy;
+    });
+
     /** @type {ProbeSummary} */
     const summary = {
       // The summary is a probe-protocol artifact, not a CLI-shaped one: it
@@ -447,9 +521,9 @@ export async function probeCommand(url, options = {}) {
       userAgent: PROBE_USER_AGENT,
       deadlineMs,
       interrupted,
-      samples
+      samples: specSamples
     };
-    const output = createEnvelope("probe", { summary });
+    const output = createEnvelope("probe", { summary, observations });
     if (options.sign && signingKey) {
       Object.assign(output, { signature: signDetachedJws(output, signingKey, options.keyId) });
     }
