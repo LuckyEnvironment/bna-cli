@@ -34,6 +34,29 @@ test("clean validation display is plain, bounded, and marks observations as unve
   for (const line of result.stdout.split("\n")) assert.ok(line.length <= 100, `line exceeded 100 columns: ${line}`);
 });
 
+test("a card using the accepted nested extension form is never reported as undeclared", async () => {
+  // validateCard accepts `x-bna: { residency }` as a style warning, so the
+  // renderer must resolve it the same way. Reading the flat key alone told a
+  // compliant vendor their residency was "not declared" — the product exists
+  // to stop exactly that kind of unfounded statement about a third party.
+  const directory = testDirectory("nested-extension-form");
+  const { "x-bna.residency": residency, "x-bna.zdr": zdr, ...flat } = validCard();
+  const card = writeJson(directory, "card.json", {
+    ...flat,
+    "x-bna": { residency, zdr }
+  });
+
+  const result = await runCli(["validate", card], { env: { BNA_CONFIG_DIR: path.join(directory, "config") } });
+
+  assert.match(result.stdout, /Residency\s+----\s+declared eu-west-1/, "a declared residency was rendered as absent");
+  assert.match(result.stdout, /Retention policy\s+----\s+declared zero-retention/);
+  assert.doesNotMatch(result.stdout, /not declared/, "the card declared these fields; the output says it did not");
+
+  // Still unverified, and still never a pass.
+  assert.match(result.stdout, /Residency\s+----/);
+  assert.doesNotMatch(result.stdout, /Residency\s+PASS/);
+});
+
 test("all documented exit codes have an executable CLI path", async () => {
   const directory = testDirectory("exit-codes");
   const config = path.join(directory, "config");

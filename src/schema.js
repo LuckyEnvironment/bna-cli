@@ -5,5 +5,6 @@ export {
   CARD_SCHEMA,
   SCHEMA_METADATA,
   SCHEMA_VERSION,
+  readCardField,
   validateCard
 } from "@bna/validator-core";

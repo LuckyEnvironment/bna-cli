@@ -2,7 +2,15 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALLOWED_METHODS, SPEC_VERSION, USER_AGENT_PATTERN, validateSummary } from "@bna/probe-protocol";
+import {
+  ALLOWED_METHODS,
+  SPEC_VERSION,
+  USER_AGENT_PATTERN,
+  classifyOutcome,
+  parseRetryAfter as specParseRetryAfter,
+  validateSummary
+} from "@bna/probe-protocol";
+import { parseRetryAfter } from "../src/commands/probe.js";
 import { runCli, withServer } from "./helpers.js";
 
 /**
@@ -81,6 +89,62 @@ test("a deadline-truncated run emits a conformant partial summary", async () => 
       assert.deepEqual(validateSummary(summary), [], "partial results must still be conformant");
     }
   );
+});
+
+test("the CLI classifies every response status exactly as SPEC.md §2.2 does", async () => {
+  // Driven through the real command against a real socket, one status at a
+  // time, because the failure this guards against was a second copy of the
+  // classification rule in the CLI that quietly disagreed with the published
+  // one. `response.ok` is a 2xx test; the spec calls 3xx a success too.
+  const statuses = [200, 204, 301, 302, 304, 307, 400, 404, 429, 500, 503];
+
+  for (const status of statuses) {
+    await withServer(
+      (request, response) => {
+        response.writeHead(status, status === 429 ? { "retry-after": "0" } : undefined);
+        response.end();
+      },
+      async (url) => {
+        const { stdout } = await runCli(["probe", url, "--json", "--window", "1", "--allow-private"]);
+        const summary = probeSummary(stdout);
+        assert.deepEqual(validateSummary(summary), [], `HTTP ${status} produced a non-conformant summary`);
+
+        const expected = classifyOutcome({ status });
+        const sample = summary.samples[0];
+        assert.equal(
+          sample.outcome,
+          expected.outcome,
+          `HTTP ${status}: CLI said ${sample.outcome}, SPEC.md §2.2 says ${expected.outcome}`
+        );
+        assert.equal(
+          sample.reason ?? undefined,
+          expected.reason,
+          `HTTP ${status}: CLI reason ${sample.reason} does not match the spec's ${expected.reason}`
+        );
+      }
+    );
+  }
+});
+
+test("the CLI resolves Retry-After through the specification's parser", () => {
+  // SPEC.md §4.2: a malformed value is absent, and must never collapse to a
+  // zero delay. Date.parse alone accepts "-5" as a year and "1.5" as a date,
+  // both of which land in the past — which is how a hand-rolled copy of this
+  // turned "unparseable" into "retry immediately".
+  const now = Date.parse("2026-07-26T12:00:00Z");
+  const cases = ["-5", "1.5", "0.5", "-99999", "abc", "", "   ", "0", "120", "Wed, 21 Oct 2026 07:28:00 GMT"];
+
+  for (const value of cases) {
+    assert.equal(
+      parseRetryAfter(value, now),
+      specParseRetryAfter(value, now),
+      `Retry-After: ${JSON.stringify(value)} is resolved differently by the CLI and the specification`
+    );
+  }
+
+  for (const malformed of ["-5", "1.5", "0.5", "-99999", "abc"]) {
+    assert.equal(parseRetryAfter(malformed, now), null, `${JSON.stringify(malformed)} must be absent, not a delay`);
+  }
 });
 
 test("the CLI and the specification agree on probe etiquette", async () => {

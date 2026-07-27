@@ -3,7 +3,7 @@
 import { readJsonSource } from "../lib/io.js";
 import { asCodedError, errorMessage } from "../lib/errors.js";
 import { createEnvelope, writeJson } from "../lib/json-envelope.js";
-import { validateCard } from "../schema.js";
+import { readCardField, validateCard } from "../schema.js";
 
 /** @typedef {{ strict?: boolean, json?: boolean, allowPrivateHosts?: boolean }} ValidateOptions */
 
@@ -94,14 +94,22 @@ export function printHuman(report, card) {
       ? `a2a/${typeof protocol === "string" ? protocol : "unknown"}, ${report.fields.length} fields, ${capabilityCount} capabilities declared`
       : `${report.errors} blocking, ${report.warns} incomplete fields`;
 
-  const residency = cardValue(card, "x-bna.residency");
-  const zdr = cardValue(card, "x-bna.zdr");
+  // Resolved through the validator, not by reading the flat key directly, so
+  // that a card using the accepted nested form is not reported as undeclared.
+  const residency = readCardField(card, "x-bna.residency");
+  const zdr = readCardField(card, "x-bna.zdr");
 
   console.log(humanLine("Card schema", schemaState, schemaDetail));
   console.log(humanLine("Transport", "----", "not observed by local schema validation"));
-  console.log(humanLine("Residency", "----", unverifiable(typeof residency === "string" ? residency : null)));
   console.log(
-    humanLine("Retention policy", "----", unverifiable(zdr === true ? "zero-retention" : zdr === false ? "retention" : null))
+    humanLine("Residency", "----", unverifiable(typeof residency.value === "string" ? residency.value : null))
+  );
+  console.log(
+    humanLine(
+      "Retention policy",
+      "----",
+      unverifiable(zdr.value === true ? "zero-retention" : zdr.value === false ? "retention" : null)
+    )
   );
   console.log(
     `\n  ${report.fields.filter((field) => field.level === "ok").length} checks passed · ${report.warns} warnings · ${report.errors} failures`

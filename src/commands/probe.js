@@ -2,18 +2,32 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { SPEC_VERSION } from "@bna/probe-protocol";
+import {
+  SPEC_VERSION,
+  aggregate,
+  assertAllowedMethod,
+  classifyOutcome,
+  parseRetryAfter as specParseRetryAfter,
+  waitMs as specWaitMs
+} from "@bna/probe-protocol";
 import { asCodedError, codedError, errorMessage } from "../lib/errors.js";
 import { createEnvelope, writeJson } from "../lib/json-envelope.js";
 import { parseRemoteUrl, safeFetch } from "../lib/network-safety.js";
+
+/**
+ * Every normative rule below is imported from `@bna/probe-protocol` rather
+ * than restated here. The spec package is what BNA published and what a third
+ * party checks an independent implementation against; a second copy in the
+ * CLI is a copy that can drift, and each of the three places it drifted
+ * before (Retry-After parsing, 3xx classification, the consecutive-429
+ * counter) produced output that contradicted the published specification.
+ */
 
 const PROBE_USER_AGENT = "BNA CLI/0.1.0 (+https://bna.dev/trust-methodology)";
 const DEFAULT_PROBE_INTERVAL_MS = 1_000;
 const DEFAULT_DEADLINE_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const DEFAULT_BACKOFF_MS = 1_000;
-const MAX_BACKOFF_MS = 60_000;
-const ALLOWED_METHODS = new Set(["GET", "HEAD"]);
 
 /**
  * @typedef {"success" | "failure" | "not_attempted"} ProbeOutcome
@@ -83,27 +97,30 @@ function sleep(milliseconds, signal) {
 }
 
 /**
+ * SPEC.md §4.2, resolved by the specification's own parser.
+ *
  * @param {string | null} value
  * @param {number} [now]
  * @returns {number | null}
  */
 export function parseRetryAfter(value, now = Date.now()) {
-  if (!value) return null;
-  if (/^\d+$/.test(value.trim())) return Number(value.trim()) * 1_000;
-  const date = Date.parse(value);
-  return Number.isNaN(date) ? null : Math.max(0, date - now);
+  return specParseRetryAfter(value, now);
 }
 
 /**
+ * SPEC.md §3.1. The allowlist itself lives in the spec package; this wrapper
+ * only restates the refusal as a CLI-coded error so the command still exits 2
+ * with an actionable message.
+ *
  * @param {string | undefined} method
  * @returns {"GET" | "HEAD"}
  */
 export function allowedProbeMethod(method) {
-  const normalized = (method ?? "GET").toUpperCase();
-  if (!ALLOWED_METHODS.has(normalized)) {
+  try {
+    return assertAllowedMethod(method);
+  } catch {
     throw codedError("Probe requests are limited to read-only GET or HEAD. No endpoint tools are invoked.", "INPUT");
   }
-  return /** @type {"GET" | "HEAD"} */ (normalized);
 }
 
 /**
@@ -138,40 +155,38 @@ export async function singleProbe(url, options) {
     const ms = Math.round(performance.now() - started);
     const at = new Date().toISOString();
 
-    if (response.status === 429) {
-      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
-      await response.body?.cancel();
-      return {
-        index: options.index,
-        outcome: "not_attempted",
-        ms,
-        at,
-        status: response.status,
-        reason: "rate_limited",
-        ...(retryAfterMs === null ? {} : { retryAfterMs })
-      };
-    }
-
+    // §2.2 decides the outcome, including that 3xx is a success and that a
+    // 429 is `not_attempted`. `response.ok` is a 2xx test and is not the
+    // spec's rule, so it is deliberately not consulted here.
+    const { outcome, reason } = classifyOutcome({ status: response.status });
+    const retryAfterMs = response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) : null;
     await response.body?.cancel();
+
     return {
       index: options.index,
-      outcome: response.ok ? "success" : "failure",
+      outcome,
       ms,
       at,
       status: response.status,
-      ...(response.ok ? {} : { reason: `http_${response.status}` })
+      ...(reason === undefined ? {} : { reason }),
+      ...(retryAfterMs === null ? {} : { retryAfterMs })
     };
   } catch (error) {
     const coded = asCodedError(error);
     if (coded?.code === "PRIVATE_HOST" || coded?.code === "UNSAFE_URL") throw coded;
+
+    // The two abort causes are kept apart so §2.2's ordering can distinguish
+    // them; collapsing them would report an operator interrupt as a deadline.
     const deadlineReached = options.signal.reason === "deadline" || Date.now() >= options.deadlineAt;
-    const interrupted = options.signal.aborted || deadlineReached;
+    const interrupted = options.signal.aborted && !deadlineReached;
+    const { outcome, reason } = classifyOutcome({ interrupted, deadlineReached, status: null });
+
     return {
       index: options.index,
-      outcome: interrupted ? "not_attempted" : "failure",
+      outcome,
       ms: Math.round(performance.now() - started),
       at: new Date().toISOString(),
-      reason: interrupted ? (deadlineReached ? "deadline_exceeded" : "interrupted") : "network_error"
+      ...(reason === undefined ? {} : { reason })
     };
   } finally {
     clearTimeout(timer);
@@ -365,10 +380,6 @@ export async function probeCommand(url, options = {}) {
     const deadlineTimer = setTimeout(() => controller.abort("deadline"), deadlineMs);
     /** @type {ProbeSample[]} */
     const samples = [];
-    let success = 0;
-    let failure = 0;
-    let notAttempted = 0;
-    let totalLatency = 0;
     let rateLimitCount = 0;
 
     try {
@@ -376,7 +387,6 @@ export async function probeCommand(url, options = {}) {
         if (controller.signal.aborted || Date.now() >= deadlineAt) {
           const reason = interrupted ? "interrupted" : "deadline_exceeded";
           samples.push({ index, outcome: "not_attempted", ms: 0, at: new Date().toISOString(), reason });
-          notAttempted += 1;
           break;
         }
         const sample = await singleProbe(url, {
@@ -387,26 +397,25 @@ export async function probeCommand(url, options = {}) {
           allowPrivateHosts: options.allowPrivateHosts
         });
         samples.push(sample);
-        if (sample.outcome === "success") {
-          success += 1;
-          totalLatency += sample.ms;
-        } else if (sample.outcome === "failure") {
-          failure += 1;
-          totalLatency += sample.ms;
-        } else {
-          notAttempted += 1;
+
+        const running = aggregate(samples);
+        if (options.watch && !options.json && !options.sign) {
+          printProgress(sample, requested, running.success, running.attempted);
         }
-        const attempted = success + failure;
-        if (options.watch && !options.json && !options.sign) printProgress(sample, requested, success, attempted);
 
         if (index < requested) {
-          const backoff = Math.min(MAX_BACKOFF_MS, backoffBaseMs * 2 ** rateLimitCount);
-          const waitMs =
-            sample.outcome === "not_attempted" && sample.reason === "rate_limited"
-              ? Math.max(sample.retryAfterMs ?? 0, backoff)
-              : intervalMs;
-          if (sample.outcome === "not_attempted" && sample.reason === "rate_limited") rateLimitCount += 1;
-          const stopped = await sleep(waitMs, controller.signal);
+          const rateLimited = sample.outcome === "not_attempted" && sample.reason === "rate_limited";
+          // §4.3: the wait is the longer of Retry-After and the backoff, and
+          // the consecutive counter resets on any response that is not a 429.
+          const wait = specWaitMs({
+            rateLimited,
+            retryAfterMs: sample.retryAfterMs ?? null,
+            consecutiveRateLimits: rateLimitCount,
+            intervalMs,
+            baseMs: backoffBaseMs
+          });
+          rateLimitCount = rateLimited ? rateLimitCount + 1 : 0;
+          const stopped = await sleep(wait, controller.signal);
           if (stopped && controller.signal.reason !== "deadline") interrupted = true;
         }
       }
@@ -415,7 +424,7 @@ export async function probeCommand(url, options = {}) {
       process.removeListener("SIGINT", onInterrupt);
     }
 
-    const attempted = success + failure;
+    const { attempted, success, failure, notAttempted, uptimePct, avgLatencyMs } = aggregate(samples);
     /** @type {ProbeSummary} */
     const summary = {
       // The summary is a probe-protocol artifact, not a CLI-shaped one: it
@@ -430,8 +439,8 @@ export async function probeCommand(url, options = {}) {
       success,
       failure,
       notAttempted,
-      uptimePct: attempted === 0 ? null : Number(((success / attempted) * 100).toFixed(2)),
-      avgLatencyMs: attempted === 0 ? null : Math.round(totalLatency / attempted),
+      uptimePct,
+      avgLatencyMs,
       vantagePoint: "single-local",
       vantagePointNote: "Local probes are a single vantage point, not BNA's multi-region trust score.",
       method,
