@@ -14,6 +14,11 @@ import { asCodedError, codedError, errorMessage } from "../lib/errors.js";
 import { createEnvelope, writeJson } from "../lib/json-envelope.js";
 import { parseRemoteUrl, safeFetch } from "../lib/network-safety.js";
 import {
+  parseCompactJws,
+  signDetachedJws as sharedSignDetachedJws,
+  verifyDetachedJws as sharedVerifyDetachedJws
+} from "@bna/witness-log";
+import {
   RECEIPT_HEADER,
   digestResponseHead,
   openObservation,
@@ -300,13 +305,6 @@ function privateSigningKey(keyMaterial) {
   throw codedError("Only Ed25519 and RSA private keys are supported for detached JWS signatures.", "INPUT");
 }
 
-/**
- * @param {Buffer} value
- * @returns {string}
- */
-function base64url(value) {
-  return value.toString("base64url");
-}
 
 /**
  * Create an RFC 7515 detached compact JWS. The payload's base64url segment is
@@ -315,26 +313,19 @@ function base64url(value) {
  * @param {Record<string, unknown>} payload
  * @param {string} keyMaterial
  * @param {string | undefined} keyId
- * @returns {{ format: "detached-jws", detachedJws: string, algorithm: "EdDSA" | "RS256", keyId?: string }}
+ * @returns {Promise<{ format: "detached-jws", detachedJws: string, algorithm: "EdDSA" | "RS256", keyId?: string }>}
  */
-export function signDetachedJws(payload, keyMaterial, keyId) {
+export async function signDetachedJws(payload, keyMaterial, keyId) {
   const signing = privateSigningKey(keyMaterial);
-  const protectedHeader = {
-    alg: signing.algorithm,
-    typ: "JOSE",
-    ...(keyId ? { kid: keyId } : {})
-  };
-  const encodedHeader = base64url(Buffer.from(JSON.stringify(protectedHeader)));
-  const encodedPayload = base64url(Buffer.from(JSON.stringify(payload)));
-  const signingInput = Buffer.from(`${encodedHeader}.${encodedPayload}`);
-  const signature =
-    signing.algorithm === "EdDSA"
-      ? crypto.sign(null, signingInput, signing.key)
-      : crypto.sign("RSA-SHA256", signingInput, signing.key);
+  const detachedJws = await sharedSignDetachedJws(payload, {
+    algorithm: signing.algorithm,
+    privateKey: keyMaterial,
+    keyId
+  });
 
   return {
     format: "detached-jws",
-    detachedJws: `${encodedHeader}..${base64url(signature)}`,
+    detachedJws,
     algorithm: signing.algorithm,
     ...(keyId ? { keyId } : {})
   };
@@ -344,9 +335,13 @@ export function signDetachedJws(payload, keyMaterial, keyId) {
  * @param {Record<string, unknown>} payload
  * @param {unknown} signature
  * @param {string} keyMaterial
- * @returns {{ valid: boolean, algorithm: "EdDSA" | "RS256", keyId?: string }}
+ * @returns {Promise<{ valid: boolean, algorithm: "EdDSA" | "RS256", keyId?: string }>}
  */
-export function verifyDetachedJws(payload, signature, keyMaterial) {
+export async function verifyDetachedJws(payload, signature, keyMaterial) {
+  // The envelope checks stay here, because they are the CLI's contract: each
+  // one maps to an exit code and an actionable message. Only the JOSE handling
+  // moved, so there is one implementation of it rather than two free to drift
+  // on exactly the parsing edge cases the receipt replay suite exists to catch.
   if (typeof signature !== "object" || signature === null || Array.isArray(signature)) {
     throw codedError("Summary does not include a detached JWS signature.", "INPUT");
   }
@@ -354,21 +349,12 @@ export function verifyDetachedJws(payload, signature, keyMaterial) {
   if (record.format !== "detached-jws" || typeof record.detachedJws !== "string") {
     throw codedError("Summary signature is not a supported detached JWS.", "INPUT");
   }
-  const parts = record.detachedJws.split(".");
-  if (parts.length !== 3 || parts[1] !== "" || !parts[0] || !parts[2]) {
+
+  const parsed = parseCompactJws(record.detachedJws);
+  if (parsed === null || !parsed.detached) {
     throw codedError("Detached JWS must use the protected..signature compact form.", "INPUT");
   }
-
-  /** @type {{ alg?: unknown, kid?: unknown }} */
-  let header;
-  try {
-    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
-  } catch {
-    throw codedError("Detached JWS protected header is not valid JSON.", "INPUT");
-  }
-  if (header.alg !== "EdDSA" && header.alg !== "RS256") {
-    throw codedError("Detached JWS uses an unsupported algorithm.", "INPUT");
-  }
+  const header = parsed.header;
   if (record.algorithm !== header.alg) {
     throw codedError("Detached JWS algorithm does not match the protected header.", "INPUT");
   }
@@ -386,14 +372,13 @@ export function verifyDetachedJws(payload, signature, keyMaterial) {
     throw codedError("Verification key type does not match the JWS algorithm.", "INPUT");
   }
 
-  const encodedPayload = base64url(Buffer.from(JSON.stringify(payload)));
-  const signingInput = Buffer.from(`${parts[0]}.${encodedPayload}`);
-  const valid =
-    header.alg === "EdDSA"
-      ? crypto.verify(null, signingInput, key, Buffer.from(parts[2], "base64url"))
-      : crypto.verify("RSA-SHA256", signingInput, key, Buffer.from(parts[2], "base64url"));
+  const checked = await sharedVerifyDetachedJws(
+    record.detachedJws,
+    payload,
+    key.export({ format: "jwk" })
+  );
   const keyId = typeof header.kid === "string" ? header.kid : undefined;
-  return { valid, algorithm: header.alg, ...(keyId ? { keyId } : {}) };
+  return { valid: checked.valid, algorithm: header.alg, ...(keyId ? { keyId } : {}) };
 }
 
 /**
@@ -525,7 +510,7 @@ export async function probeCommand(url, options = {}) {
     };
     const output = createEnvelope("probe", { summary, observations });
     if (options.sign && signingKey) {
-      Object.assign(output, { signature: signDetachedJws(output, signingKey, options.keyId) });
+      Object.assign(output, { signature: await signDetachedJws(output, signingKey, options.keyId) });
     }
 
     if (options.json || options.sign) {

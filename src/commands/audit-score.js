@@ -3,7 +3,13 @@
 import { readFileSync } from "node:fs";
 import { aggregate } from "@bna/probe-protocol";
 import { validate } from "@bna/probe-protocol";
-import { SCORE_BUNDLE_SCHEMA, leafHash, verifyConsistency, verifyInclusion } from "@bna/witness-log";
+import {
+  SCORE_BUNDLE_SCHEMA,
+  countsTowardScore,
+  leafHash,
+  verifyConsistency,
+  verifyInclusion
+} from "@bna/witness-log";
 import { codedError, errorMessage } from "../lib/errors.js";
 import { createEnvelope, writeJson } from "../lib/json-envelope.js";
 import { safeFetch } from "../lib/network-safety.js";
@@ -22,7 +28,7 @@ import { safeFetch } from "../lib/network-safety.js";
  * arithmetic over them is honest. It does not show the observations were
  * honestly *collected* — that a probe BNA claims to have sent was really sent.
  * Only the vendor can check that, from their own logs, using the nonce; see
- * `bna witness` when it ships in M3.
+ * `bna reconcile`.
  */
 
 const DEFAULT_LOG_BASE = "https://transparency.bna.dev";
@@ -98,7 +104,7 @@ async function fetchBundle(agentId, period, base) {
  *
  * @param {any} bundle
  * @param {any | null} against an STH the caller recorded independently
- * @returns {Promise<{ backed: boolean, steps: {step: number, name: string, passed: boolean, detail: string | null}[], derived: unknown, warnings: string[], notices: string[] }>}
+ * @returns {Promise<{ backed: boolean, steps: {step: number, name: string, passed: boolean, detail: string | null}[], derived: unknown, grades: Record<string, number>, warnings: string[], notices: string[] }>}
  */
 export async function verifyBundle(bundle, against) {
   /** @type {{step: number, name: string, passed: boolean, detail: string | null}[]} */
@@ -177,12 +183,17 @@ export async function verifyBundle(bundle, against) {
     });
   }
 
-  /* Step 3 — the arithmetic is re-derived, not accepted.
+  /* Step 3 — the arithmetic is re-derived, not accepted, over the leaves that
+     may contribute to a score. A poisoned leaf is excluded here rather than
+     rejected outright: "excluded, not deleted" means a bundle discloses BNA's
+     own upheld errors instead of hiding them, so a verifier has to know they
+     are present and check they were not counted.
      SPEC section 2.3 lives in @bna/probe-protocol and is called, not copied:
      attempted = success + failure, `not_attempted` stays out of the
      denominator, and uptimePct/avgLatencyMs are null when nothing was
      attempted rather than 0. */
-  const recomputed = aggregate(bundle.leaves.map((/** @type {any} */ entry) => entry.leaf));
+  const scoreable = bundle.leaves.filter((/** @type {any} */ entry) => countsTowardScore(entry.grade));
+  const recomputed = aggregate(scoreable.map((/** @type {any} */ entry) => entry.leaf));
   const claimed = bundle.derived ?? {};
   const mismatches = [];
   for (const key of ["attempted", "success", "failure", "notAttempted", "uptimePct", "avgLatencyMs"]) {
@@ -190,8 +201,10 @@ export async function verifyBundle(bundle, against) {
       mismatches.push(`${key}: bundle says ${JSON.stringify(claimed[key])}, the leaves give ${JSON.stringify(/** @type {any} */ (recomputed)[key])}`);
     }
   }
-  if (claimed.requested !== bundle.leaves.length) {
-    mismatches.push(`requested: bundle says ${JSON.stringify(claimed.requested)}, it carries ${bundle.leaves.length} leaves`);
+  if (claimed.requested !== scoreable.length) {
+    mismatches.push(
+      `requested: bundle says ${JSON.stringify(claimed.requested)}, it carries ${scoreable.length} scoreable leaves`
+    );
   }
   steps.push({
     step: 3,
@@ -200,17 +213,42 @@ export async function verifyBundle(bundle, against) {
     detail: mismatches.length === 0 ? null : mismatches.join("; ")
   });
 
-  /* Step 4 — nothing upheld against BNA is being counted. */
+  /* Step 4 — nothing upheld against BNA is being counted.
+
+     Not "no poisoned leaf is present". A bundle that disclosed none of BNA's
+     overturned measurements would be a bundle a reader learns less from, and
+     the doctrine is exclusion rather than deletion. What must hold is that a
+     poisoned leaf did not enter the arithmetic — which step 3 above enforces
+     by construction, and this step states explicitly so a reader can see it
+     was checked rather than assumed. */
   const poisoned = bundle.leaves.filter((/** @type {any} */ entry) => entry.grade === "poisoned");
+  const poisonedCounted = poisoned.length > 0 && scoreable.length !== bundle.leaves.length - poisoned.length;
   steps.push({
     step: 4,
-    name: "no leaf in the set is graded poisoned",
-    passed: poisoned.length === 0,
-    detail:
-      poisoned.length === 0
+    name: "no poisoned leaf contributed to the score",
+    passed: !poisonedCounted,
+    detail: poisonedCounted
+      ? "a leaf with an upheld contradiction against it was counted"
+      : poisoned.length === 0
         ? null
-        : `${poisoned.length} leaf/leaves were graded poisoned — a contradiction against them was upheld, and they may not contribute to any score`
+        : `${poisoned.length} poisoned leaf/leaves are disclosed and excluded from the arithmetic`
   });
+
+  if (poisoned.length > 0) {
+    warnings.push(
+      `${poisoned.length} observation(s) in this period had a contradiction upheld against them. They are retained in the log and excluded from the score.`
+    );
+  }
+
+  // Evidence grades are disclosure, never arithmetic. They say what you can
+  // check about BNA — whether the observed party countersigned a measurement —
+  // and nothing about the agent's behaviour. A vendor who does not implement
+  // receipts sees `logged` here and an identical score, which is enforced by a
+  // property test in @bna/witness-log rather than by this comment.
+  const grades = { attested: 0, logged: 0, disputed: 0, poisoned: 0 };
+  for (const entry of bundle.leaves) {
+    if (Object.prototype.hasOwnProperty.call(grades, entry.grade)) grades[entry.grade] += 1;
+  }
 
   const disputed = bundle.leaves.filter((/** @type {any} */ entry) => entry.grade === "disputed");
   if (disputed.length > 0) {
@@ -223,6 +261,7 @@ export async function verifyBundle(bundle, against) {
     backed: steps.every((step) => step.passed),
     steps,
     derived: recomputed,
+    grades,
     warnings,
     notices
   };
@@ -288,6 +327,7 @@ export async function auditScoreCommand(agentId, options) {
         leafCount: bundle.leaves.length,
         steps: result.steps,
         derived: result.derived,
+        grades: result.grades,
         claimed: bundle.derived ?? null
       })
     );
@@ -298,6 +338,12 @@ export async function auditScoreCommand(agentId, options) {
       console.log(`  ${mark}  ${step.step}. ${step.name}`);
       if (step.detail) console.log(`        ${step.detail}`);
     }
+    console.log(
+      `\n  Evidence: ${result.grades.attested} attested · ${result.grades.logged} logged` +
+        `${result.grades.disputed ? ` · ${result.grades.disputed} disputed` : ""}` +
+        `${result.grades.poisoned ? ` · ${result.grades.poisoned} poisoned` : ""}` +
+        `\n  Disclosure only — a countersigned observation is worth exactly what an uncountersigned one is.`
+    );
     console.log(
       result.backed
         ? "\n  BACKED — every premise of this score is public and checked."

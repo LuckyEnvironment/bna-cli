@@ -289,4 +289,4 @@ the arithmetic follows from the leaves. It does not mean the observations
 happened: a fabricated measurement, committed honestly and never altered,
 produces a perfectly valid set of proofs. Only the observed party can check
 that, from their own access logs, against the nonce each probe sent — see
-`@bna/witness-log` and `bna witness` when it ships.
+`@bna/witness-log` and `bna reconcile`.

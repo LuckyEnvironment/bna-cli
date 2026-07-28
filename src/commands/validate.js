@@ -111,7 +111,12 @@ export function printHuman(report, card) {
       unverifiable(zdr.value === true ? "zero-retention" : zdr.value === false ? "retention" : null)
     )
   );
+  // `infos` are counted separately and never as failures. An undeclared probe
+  // key is the vendor declining to countersign BNA's measurements of them,
+  // which is their right and costs them nothing.
+  const infos = report.infos ?? 0;
   console.log(
-    `\n  ${report.fields.filter((field) => field.level === "ok").length} checks passed · ${report.warns} warnings · ${report.errors} failures`
+    `\n  ${report.fields.filter((field) => field.level === "ok").length} checks passed · ${report.warns} warnings · ${report.errors} failures` +
+      (infos > 0 ? ` · ${infos} informational, no verdict` : "")
   );
 }

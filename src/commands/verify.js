@@ -33,7 +33,7 @@ export async function verifyCommand(target, options = {}) {
     const signature = summary.signature;
     const payload = { ...summary };
     delete payload.signature;
-    const verification = verifyDetachedJws(payload, signature, key);
+    const verification = await verifyDetachedJws(payload, signature, key);
     const result = { valid: verification.valid, algorithm: verification.algorithm, ...(verification.keyId ? { keyId: verification.keyId } : {}) };
 
     if (options.json) {

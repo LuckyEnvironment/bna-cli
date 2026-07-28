@@ -19,7 +19,8 @@
         "validate",
         "probe",
         "verify",
-        "audit-score"
+        "audit-score",
+        "reconcile"
       ]
     },
     "toolVersion": {
@@ -70,6 +71,9 @@
         },
         {
           "$ref": "#/$defs/auditScoreResult"
+        },
+        {
+          "$ref": "#/$defs/reconcileResult"
         }
       ]
     }
@@ -273,6 +277,110 @@
             "object",
             "null"
           ]
+        },
+        "grades": {
+          "type": "object",
+          "description": "Evidence-grade counts, disclosure only. These describe what can be checked about BNA's measurement, not about the agent, and they never enter the arithmetic in `derived`.",
+          "additionalProperties": false,
+          "properties": {
+            "attested": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "logged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "disputed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "poisoned": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "reconcileResult": {
+      "description": "What a vendor's own access log says about BNA's published measurements of them. Computed on the vendor's machine; BNA is not in the trust path.",
+      "type": "object",
+      "required": [
+        "agentId",
+        "leaves",
+        "matched",
+        "discrepancies",
+        "byClass"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "leaves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logFormat": {
+          "type": "string"
+        },
+        "matched": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "statusDisagrees": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attested": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "discrepancies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "class",
+              "nonce",
+              "detail"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "enum": [
+                  "no_such_request",
+                  "status_mismatch",
+                  "timing_mismatch",
+                  "receipt_forged"
+                ]
+              },
+              "nonce": {
+                "type": "string"
+              },
+              "requestedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "byClass": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     }

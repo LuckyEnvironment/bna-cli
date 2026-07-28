@@ -191,19 +191,56 @@ test("a period in which nothing was attempted reports null, never 0", async () =
   assert.equal(/** @type {any} */ (result.derived).avgLatencyMs, null);
 });
 
-test("a poisoned leaf makes the score unbacked — step 4 fails", async () => {
+test("a poisoned leaf is disclosed, excluded from the arithmetic, and still backed", async () => {
+  // "Excluded, not deleted." A bundle that hid BNA's overturned measurements
+  // would tell a reader less, so the leaf stays in and the arithmetic leaves
+  // it out. What must be checked is that it was not counted.
   const { bundle } = await buildBundle(
     [
       { outcome: "success", ms: 80 },
-      { outcome: "success", ms: 90 }
+      { outcome: "failure", ms: 400 }
     ],
     ["logged", "poisoned"]
   );
 
+  // The failure was overturned, so the score is computed over the one leaf
+  // that remains.
+  bundle.derived = {
+    requested: 1,
+    attempted: 1,
+    success: 1,
+    failure: 0,
+    notAttempted: 0,
+    uptimePct: 100,
+    avgLatencyMs: 80
+  };
+
+  const result = await verifyBundle(bundle, null);
+  assert.equal(result.backed, true, JSON.stringify(result.steps, null, 2));
+  assert.equal(result.steps[3].passed, true);
+  assert.match(String(result.steps[3].detail), /disclosed and excluded/);
+  assert.ok(
+    result.warnings.some((warning) => /upheld against them/.test(warning)),
+    "an upheld contradiction must be surfaced to the reader"
+  );
+  // Still present in the bundle: excluded, not deleted.
+  assert.equal(bundle.leaves.length, 2);
+});
+
+test("counting a poisoned leaf makes the score unbacked", async () => {
+  const { bundle } = await buildBundle(
+    [
+      { outcome: "success", ms: 80 },
+      { outcome: "failure", ms: 400 }
+    ],
+    ["logged", "poisoned"]
+  );
+
+  // derived still counts both, as buildBundle computed it — including the leaf
+  // whose contradiction was upheld.
   const result = await verifyBundle(bundle, null);
   assert.equal(result.backed, false);
-  assert.equal(result.steps[3].passed, false);
-  assert.match(String(result.steps[3].detail), /poisoned/);
+  assert.equal(result.steps[2].passed, false, "the arithmetic must not reproduce");
 });
 
 test("a disputed leaf is a warning, not a failure", async () => {

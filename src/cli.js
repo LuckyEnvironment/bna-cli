@@ -3,6 +3,7 @@
 import { login, whoami } from "./commands/auth.js";
 import { diffCommand } from "./commands/diff.js";
 import { probeCommand } from "./commands/probe.js";
+import { reconcileCommand } from "./commands/reconcile.js";
 import { auditScoreCommand } from "./commands/audit-score.js";
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
@@ -28,6 +29,9 @@ Commands:
                                             Verify a detached JWS summary
   diff <url|file> [--update] [--allow-private]
                                             Compare card to stored snapshot
+  reconcile --agent <id> --access-log <path> [--since 30d] [--format auto]
+        [--bundle <file>] [--nonce-field <path>] [--json]
+                                            Check BNA's claims against your logs
   audit-score <agentId> --period <YYYY-MM> [--against <sth.json>]
         [--bundle <bundle.json>] [--log-base <url>] [--json]
                                             Check a score against the log
@@ -48,11 +52,16 @@ export function parseFlags(args) {
   const flags = {};
   /** @type {string[]} */
   const positionals = [];
-  const booleanFlags = new Set(["--strict", "--json", "--watch", "--update", "--sign", "--allow-private"]);
+  const booleanFlags = new Set(["--strict", "--json", "--watch", "--update", "--sign", "--allow-private", "--file"]);
   const valueFlags = new Set([
     "--org",
     "--token",
     "--period",
+    "--agent",
+    "--since",
+    "--access-log",
+    "--format",
+    "--nonce-field",
     "--against",
     "--bundle",
     "--log-base",
@@ -145,8 +154,8 @@ export async function runCli(argv) {
   const args = positionals.slice(1);
   const json = flags.json === true;
 
-  if (json && !["validate", "probe", "verify", "audit-score"].includes(command)) {
-    console.error(`--json is not available for ${command}. Use validate, probe, verify, or audit-score.`);
+  if (json && !["validate", "probe", "verify", "audit-score", "reconcile"].includes(command)) {
+    console.error(`--json is not available for ${command}. Use validate, probe, verify, audit-score, or reconcile.`);
     return 2;
   }
 
@@ -195,6 +204,19 @@ export async function runCli(argv) {
         return 2;
       }
       return verifyCommand(args[0], { key: stringFlag(flags, "key"), json });
+    case "reconcile":
+      return reconcileCommand({
+        agent: stringFlag(flags, "agent"),
+        since: stringFlag(flags, "since"),
+        accessLog: stringFlag(flags, "access-log"),
+        format: stringFlag(flags, "format"),
+        nonceField: stringFlag(flags, "nonce-field"),
+        bundle: stringFlag(flags, "bundle"),
+        logBase: stringFlag(flags, "log-base"),
+        file: flags.file === true,
+        json
+      });
+
     case "audit-score":
       return auditScoreCommand(args[0], {
         period: stringFlag(flags, "period"),

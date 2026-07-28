@@ -69,17 +69,19 @@ test("diff retains snapshots and validation handles file errors", async () => {
   assert.equal(await validateCommand(path.join(directory, "missing.json")), 2);
 });
 
-test("probe signing primitives reject unsupported methods and detect mutation", () => {
+test("probe signing primitives reject unsupported methods and detect mutation", async () => {
   assert.equal(allowedProbeMethod("head"), "HEAD");
   assert.throws(() => allowedProbeMethod("POST"), /read-only GET or HEAD/);
   assert.equal(parseRetryAfter("3"), 3_000);
   assert.equal(parseRetryAfter("invalid"), null);
   const pair = awaitableKeyPair();
   const payload = { schemaVersion: "1.0.0", result: { success: true } };
-  const signature = signDetachedJws(payload, pair.privateKey, "test");
-  assert.equal(verifyDetachedJws(payload, signature, pair.publicKey).valid, true);
+  // Async since the JOSE handling moved into @bna/witness-log, which has to
+  // run in a browser too and therefore cannot use a synchronous digest.
+  const signature = await signDetachedJws(payload, pair.privateKey, "test");
+  assert.equal((await verifyDetachedJws(payload, signature, pair.publicKey)).valid, true);
   payload.result.success = false;
-  assert.equal(verifyDetachedJws(payload, signature, pair.publicKey).valid, false);
+  assert.equal((await verifyDetachedJws(payload, signature, pair.publicKey)).valid, false);
 });
 
 test("probe deadline and SIGINT return honest partial results", async () => {

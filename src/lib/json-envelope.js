@@ -3,7 +3,7 @@
 export const JSON_SCHEMA_VERSION = "1.0.0";
 export const CLI_VERSION = "0.1.0";
 
-/** @typedef {"validate" | "probe" | "verify" | "audit-score"} JsonTool */
+/** @typedef {"validate" | "probe" | "verify" | "audit-score" | "reconcile"} JsonTool */
 
 /**
  * @template {Record<string, unknown>} T

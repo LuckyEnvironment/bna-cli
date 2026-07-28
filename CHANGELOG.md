@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — M3, reconciliation
+
+- **`bna reconcile --agent <id> --access-log <path>`** — check BNA's published
+  measurements of you against your own access log. Streams nginx combined,
+  nginx JSON and Caddy JSON, with `--nonce-field` for any other shape, and
+  auto-detects by sniffing the first lines. No account, no key, no network
+  beyond fetching public leaves. Exit 0 clean, 1 discrepancies, 2 malformed
+  input, 3 fetch failure.
+
+  Named `reconcile`, not `witness`: a *witness* is the party that co-signs tree
+  heads in M4, and overloading the word would collide the two roles exactly
+  where telling them apart matters. `SURFACE-05-witness.md` is updated.
+
+- **The guard that makes this safe to ship.** nginx does not log request
+  headers by default, so the overwhelmingly likely first run finds zero nonces
+  in a perfectly good log. Reporting that as "all 760 of BNA's observations are
+  fabricated" would make this a tool for manufacturing false accusations
+  against BNA — a strange thing for BNA to ship. Zero nonces in a non-empty log
+  exits 2 with the `log_format` line needed to fix it, and never reports a
+  contradiction.
+
+- `npm run verify:streaming` — generates a multi-gigabyte log and reads it
+  under a hard `--max-old-space-size` ceiling. Outside `npm run check`, like
+  the container verification, because a suite people skip protects nothing.
+
+### Changed
+
+- **`audit-score` step 4 is now "no poisoned leaf *contributed* to the score"**,
+  where it was "no poisoned leaf is *present*". A bundle discloses the
+  observations that had a contradiction upheld against them and excludes them
+  from the arithmetic — excluded, not deleted. The previous rule would have
+  failed an honest bundle for being transparent about BNA's own errors.
+
+### Added — M2, countersigning
+
+- `audit-score` now discloses evidence-grade counts: how many observations the
+  observed party countersigned. **Disclosure only.** The counts appear beside
+  the verdict and in `--json`, and the output says so in words: a countersigned
+  observation is worth exactly what an uncountersigned one is.
+
+- `bna validate` reports `x-bna.probe-key` as informational. An undeclared probe
+  key adds `· 1 informational, no verdict` to the summary and leaves a
+  conformant card scoring `ok`.
+
+### Changed
+
+- **One JWS implementation.** `signDetachedJws` and `verifyDetachedJws` keep
+  their envelope checks — each maps to an exit code and an actionable message —
+  but the JOSE handling now comes from `@bna/witness-log`. Two implementations
+  were free to drift on exactly the parsing edge cases the receipt replay suite
+  exists to catch. Both are now `async`, because the shared module has to run
+  in a browser and WebCrypto has no synchronous verify.
+
+- **Dependencies are `file:../` again**, all three of them. The git-SHA pins
+  resolved to commits predating this work, so the CLI was validating against a
+  card schema without `x-bna.probe-key` and reporting 15 fields where the
+  package now has 16. These must become SHA pins, and then `^0.1.0` ranges,
+  before publish — a clean clone will not install as it stands. Tracked in
+  `docs/ROADMAP.md`.
+
 ### Added
 
 - **`bna audit-score <agentId> --period <YYYY-MM>`** — verify that a published
