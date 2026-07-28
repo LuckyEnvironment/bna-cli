@@ -42,6 +42,14 @@
     "node": ">=20"
   },
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LuckyEnvironment/bna-cli.git"
+  },
+  "homepage": "https://github.com/LuckyEnvironment/bna-cli#readme",
+  "bugs": {
+    "url": "https://github.com/LuckyEnvironment/bna-cli/issues"
+  },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "eslint": "^9.39.1",
